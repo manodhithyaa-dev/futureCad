@@ -25,14 +25,15 @@
 <main class="test-container">
   <div class="test-card">
     <div class="test-title">
-      <h2>Automated Regression Suite (Criteria A – T)</h2>
+      <h2>Automated Regression Suite (Criteria A – DD)</h2>
       <span class="chip" id="suiteStatus"><i class="dot" id="suiteDot"></i><span id="suiteText">Running…</span></span>
     </div>
     <p class="muted" style="margin-bottom:16px;">
       Executes the pure browser-side verification engine covering requirement schemas, deterministic geometry plan validation, reviewer severity policies, false ABSENT detection, repair stagnation, and honest verification reporting.
     </p>
-    <div class="row" style="margin-bottom:16px;">
-      <button class="btn primary" id="btnRerun">↻ Re-run Test Suite</button>
+    <div class="row" style="margin-bottom:16px; gap:8px;">
+      <button class="btn primary" id="btnRerun">↻ Run Test Suite</button>
+      <button class="btn" id="btnFailMode" style="border-color:var(--err); color:var(--err);">🧪 Test Deliberate Fail Mode</button>
     </div>
     <div class="log-box" id="testLog">Initializing test suite…\n</div>
   </div>
@@ -60,24 +61,36 @@
     append(args.join(' '), true);
   };
 
-  async function run() {
+  async function run({ deliberateFail = false } = {}) {
     logEl.textContent = '';
     statusEl.textContent = 'Running…';
     dotEl.className = 'dot';
+    if (typeof window !== 'undefined') {
+      window.__TEST_DELIBERATE_FAIL__ = deliberateFail;
+    }
     try {
-      // Dynamic import with cache buster
-      await import('./test_suite.js?t=' + Date.now());
-      statusEl.textContent = 'Completed';
-      dotEl.className = 'dot ok';
+      const mod = await import('./test_suite.js?t=' + Date.now());
+      const res = mod.getTestResults ? mod.getTestResults() : window.__TEST_RESULTS__;
+      if (res && res.failed > 0) {
+        statusEl.textContent = `FAIL (${res.failed} failed, ${res.passed}/${res.total} passed)`;
+        dotEl.className = 'dot err';
+      } else if (res && res.failed === 0) {
+        statusEl.textContent = `PASS (${res.passed}/${res.total} passed)`;
+        dotEl.className = 'dot ok';
+      } else {
+        statusEl.textContent = 'FAIL (No results returned)';
+        dotEl.className = 'dot err';
+      }
     } catch (e) {
       append('Execution error: ' + e.message, true);
-      statusEl.textContent = 'Failed';
+      statusEl.textContent = 'FAIL (Runtime Error)';
       dotEl.className = 'dot err';
     }
   }
 
-  document.getElementById('btnRerun').addEventListener('click', run);
-  run();
+  document.getElementById('btnRerun').addEventListener('click', () => run({ deliberateFail: false }));
+  document.getElementById('btnFailMode').addEventListener('click', () => run({ deliberateFail: true }));
+  run({ deliberateFail: false });
 </script>
 </body>
 </html>

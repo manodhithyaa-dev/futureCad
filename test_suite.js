@@ -232,7 +232,7 @@ console.log('\n[Test Suite H] Missing Feature Parameters & Degenerate Profiles')
       }
     ],
     fillets_chamfers: [
-      { id: 'FC-FAIL', type: 'fillet', radius: 10, target: 'corner' }
+      { id: 'FC-FAIL', type: 'fillet', radius: 10, target: 'internal_corner' }
     ],
     expected_bounding_box: { x_len: 50, y_len: 40, z_len: 80 },
     expected_solid_count: 1,
@@ -1115,6 +1115,112 @@ console.log('\n[Test Suite CC] V2.1.1 Patch: Malformed JSON Input Robustness');
 }
 
 // ----------------------------------------------------
+// DD. V2.1.2 TASK 1: CORNER CLASSIFICATION (EXTERNAL PRECEDENCE VS INTERNAL VS AMBIGUOUS)
+// ----------------------------------------------------
+console.log('\n[Test Suite DD] V2.1.2: Corner Classification & Precedence');
+{
+  const planBase = {
+    coordinate_system: { units: 'mm' },
+    parameters: { length: 50, height: 80, width: 40, thickness: 4 },
+    steps: [{ id: 1, geometry: 'box', workplane: 'XZ', resulting_bounding_box: 'box' }],
+    expected_bounding_box: { x_len: 50, y_len: 40, z_len: 80 },
+    expected_solid_count: 1,
+    provisional_assumptions: [],
+    validation_steps: []
+  };
+
+  // 1. External corner: takes precedence over generic "corner", produces warning not error
+  const rExtCorner = V.validateGeometryPlan({
+    ...planBase,
+    fillets_chamfers: [{ id: 'FC-1', type: 'fillet', radius: 8, target: 'external_corner' }]
+  });
+  assert(rExtCorner.errors.length === 0, 'External corner (radius 8 mm on 4 mm thickness) produces 0 errors');
+  assert(rExtCorner.warnings.some(w => w.id === 'PLAN-FILLET-UNCERTAIN-FEASIBILITY'), 'External corner produces PLAN-FILLET-UNCERTAIN-FEASIBILITY warning');
+
+  // 2. External convex corner: produces warning not error
+  const rExtConvex = V.validateGeometryPlan({
+    ...planBase,
+    fillets_chamfers: [{ id: 'FC-2', type: 'fillet', radius: 8, target: 'external convex corner' }]
+  });
+  assert(rExtConvex.errors.length === 0, 'External convex corner produces 0 errors');
+  assert(rExtConvex.warnings.some(w => w.id === 'PLAN-FILLET-UNCERTAIN-FEASIBILITY'), 'External convex corner produces warning');
+
+  // 3. Outside corner: produces warning not error
+  const rOutside = V.validateGeometryPlan({
+    ...planBase,
+    fillets_chamfers: [{ id: 'FC-3', type: 'fillet', radius: 8, target: 'outside corner' }]
+  });
+  assert(rOutside.errors.length === 0, 'Outside corner produces 0 errors');
+  assert(rOutside.warnings.some(w => w.id === 'PLAN-FILLET-UNCERTAIN-FEASIBILITY'), 'Outside corner produces warning');
+
+  // 4. Internal corner: classified as internal concave corner, produces major error if r > thickness
+  const rIntCorner = V.validateGeometryPlan({
+    ...planBase,
+    fillets_chamfers: [{ id: 'FC-4', type: 'fillet', radius: 8, target: 'internal corner' }]
+  });
+  assert(rIntCorner.errors.some(e => e.id === 'PLAN-FILLET-EXCEEDS-THICKNESS'), 'Internal corner produces PLAN-FILLET-EXCEEDS-THICKNESS error');
+
+  // 5. Internal concave corner: produces major error if r > thickness
+  const rIntConcave = V.validateGeometryPlan({
+    ...planBase,
+    fillets_chamfers: [{ id: 'FC-5', type: 'fillet', radius: 8, target: 'internal concave corner' }]
+  });
+  assert(rIntConcave.errors.some(e => e.id === 'PLAN-FILLET-EXCEEDS-THICKNESS'), 'Internal concave corner produces PLAN-FILLET-EXCEEDS-THICKNESS error');
+
+  // 6. External edge: produces warning not error
+  const rExtEdge = V.validateGeometryPlan({
+    ...planBase,
+    fillets_chamfers: [{ id: 'FC-6', type: 'fillet', radius: 8, target: 'external edge' }]
+  });
+  assert(rExtEdge.errors.length === 0, 'External edge produces 0 errors');
+  assert(rExtEdge.warnings.some(w => w.id === 'PLAN-FILLET-UNCERTAIN-FEASIBILITY'), 'External edge produces warning');
+
+  // 7. Ambiguous corner (generic "corner"): produces warning instead of unjustified rejection
+  const rAmbiguous = V.validateGeometryPlan({
+    ...planBase,
+    fillets_chamfers: [{ id: 'FC-7', type: 'fillet', radius: 8, target: 'corner' }]
+  });
+  assert(rAmbiguous.errors.length === 0, 'Ambiguous generic corner produces 0 errors (no unjustified rejection)');
+  assert(rAmbiguous.warnings.some(w => w.id === 'PLAN-FC-TARGET-AMBIGUOUS'), 'Ambiguous corner produces PLAN-FC-TARGET-AMBIGUOUS warning');
+
+  // 8. Contradictory description: produces warning instead of unjustified rejection
+  const rContradictory = V.validateGeometryPlan({
+    ...planBase,
+    fillets_chamfers: [{ id: 'FC-8', type: 'fillet', radius: 8, target: 'internal external corner' }]
+  });
+  assert(rContradictory.errors.length === 0, 'Contradictory description produces 0 errors');
+  assert(rContradictory.warnings.some(w => w.id === 'PLAN-FC-TARGET-CONTRADICTORY'), 'Contradictory description produces PLAN-FC-TARGET-CONTRADICTORY warning');
+}
+
+// Deliberate failure test mode for verifying browser runner failure reporting
+if (typeof window !== 'undefined' && window.__TEST_DELIBERATE_FAIL__) {
+  assert(false, 'DELIBERATE FAILURE: Verifying browser runner displays FAIL status on assertion failure');
+}
+
+// ----------------------------------------------------
+// EXPORT STRUCTURED TEST RESULTS (TASK 2)
+// ----------------------------------------------------
+export function getTestResults() {
+  return {
+    passed: passedCount,
+    failed: failedCount,
+    total: passedCount + failedCount,
+    results
+  };
+}
+
+export const testResults = {
+  passed: passedCount,
+  failed: failedCount,
+  total: passedCount + failedCount,
+  results
+};
+
+if (typeof window !== 'undefined') {
+  window.__TEST_RESULTS__ = testResults;
+}
+
+// ----------------------------------------------------
 // SUMMARY
 // ----------------------------------------------------
 console.log('\n======================================================');
@@ -1125,5 +1231,5 @@ if (failedCount > 0) {
   console.error(`❌ Regression test suite failed with ${failedCount} errors.`);
   if (typeof process !== 'undefined') process.exit(1);
 } else {
-  console.log('✅ All regression criteria (A through CC) verified successfully!');
+  console.log('✅ All regression criteria (A through DD) verified successfully!');
 }

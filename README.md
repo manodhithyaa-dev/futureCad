@@ -67,7 +67,7 @@ To eliminate hallucinations, non-viable geometry, and false approvals, FutureCAD
 | **Ollama Streaming & Accounting** | Stream chunks were counted as `tokens++` (inaccurate). Drops or premature closes were silently accepted. | Uses actual `eval_count` when done; estimates tokens based on character length during streaming; detects premature stream drops (`OllamaError('incomplete')`). |
 | **Workflow Terminal Status** | If repair failed to resolve issues, `s.status` was set to `'completed'`. Failed agents were counted as 100% complete in the progress bar. | Failed agents contribute 0% to progress; unresolved workflows finish with status `'unresolved'` and display partial progress. Completed status is reserved for approved workflows. |
 | **Deliverables & UX** | Displayed raw JSON dumps in tabs. | Formatted, structured engineering views for Requirements, CAD Plan, Code Review, Repair Log, and Final Report, with full raw JSON preserved. Added `plan_validation.json` deliverable. |
-| **Regression Testing** | Zero automated tests existed in the repository. | **130 automated regression tests** covering all specifications A through CC via CLI (`node test_suite.js`) and in-browser runner (`test.html`). |
+| **Regression Testing** | Zero automated tests existed in the repository. | **144 automated regression tests** covering all specifications A through DD via CLI (`node test_suite.js`) and in-browser runner (`test.html`). |
 
 ---
 
@@ -156,12 +156,13 @@ FutureCAD includes an automated regression test suite covering specifications **
 - **AA.** V2.1.1 Patch: Perpendicular-Plane Hole Boundary Clearance & L-Bracket Face Breakouts
 - **BB.** V2.1.1 Patch: Calibrated Fillet/Chamfer Classification (Internal Corner vs External Edge)
 - **CC.** V2.1.1 Patch: Malformed JSON Robustness (Null Entries, Corrupted Coordinates, Missing Fields)
+- **DD.** V2.1.2 Patch: Nuanced Target Description Classification (External Corner, Ambiguous, Contradictory)
 
 ### Run Tests via CLI:
 ```bash
 node test_suite.js
 ```
-*Result: 130 PASSED, 0 FAILED.*
+*Result: 144 PASSED, 0 FAILED.*
 
 ### Run Tests in Browser:
 Open `http://localhost:8000/test.html` or click the **🧪 Run Test Suite** chip in the application header.

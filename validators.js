@@ -670,8 +670,34 @@ export function validateGeometryPlan(plan) {
       const fcId = fc.id || `FC-${idx + 1}`;
       const isChamfer = String(fc.type || '').toLowerCase() === 'chamfer';
       const targetStr = String(fc.target || '').toLowerCase();
-      const isInternalCorner = targetStr.includes('internal') || targetStr.includes('inside') || targetStr.includes('concave') || targetStr.includes('corner');
-      const isExternalEdge = targetStr.includes('external') || targetStr.includes('outside') || targetStr.includes('convex') || targetStr.includes('outer');
+
+      // Explicit description tokens
+      const hasExternal = targetStr.includes('external') || targetStr.includes('outside') || targetStr.includes('convex') || targetStr.includes('outer');
+      const hasInternal = targetStr.includes('internal') || targetStr.includes('inside') || targetStr.includes('concave');
+      const isContradictory = hasExternal && hasInternal;
+
+      let isInternalCorner = false;
+      let isExternalEdge = false;
+      let isAmbiguous = false;
+
+      if (isContradictory) {
+        isAmbiguous = true;
+        addWarn('PLAN-FC-TARGET-CONTRADICTORY', `fillets_chamfers[${idx}].target`,
+          `${isChamfer ? 'Chamfer' : 'Fillet'} ${fcId} has contradictory target description "${fc.target}" (both internal and external keywords); cannot deterministically classify topology`);
+      } else if (hasExternal) {
+        // Explicit external/outside/convex takes precedence over generic "corner"
+        isExternalEdge = true;
+      } else if (hasInternal) {
+        // Explicit internal/inside/concave
+        isInternalCorner = true;
+      } else {
+        // Generic "corner" or ambiguous description without internal/external specification
+        isAmbiguous = true;
+        if (targetStr.trim()) {
+          addWarn('PLAN-FC-TARGET-AMBIGUOUS', `fillets_chamfers[${idx}].target`,
+            `${isChamfer ? 'Chamfer' : 'Fillet'} ${fcId} target description "${fc.target}" is ambiguous (unspecified whether internal or external); cannot deterministically prove topological collapse`);
+        }
+      }
 
       // Check missing target geometry
       if (!fc.target || typeof fc.target !== 'string' || !fc.target.trim()) {
@@ -703,9 +729,9 @@ export function validateGeometryPlan(plan) {
             addErr('PLAN-FILLET-EXCEEDS-THICKNESS', `fillets_chamfers[${idx}].radius`,
               `Internal corner fillet radius (${r} mm) exceeds wall thickness (${thickness} mm), which demonstrably collapses opposing wall topology`, 'major');
           } else if (r > thickness + 0.01) {
-            // Large external fillet or large chamfer: not an automatic violation; produce uncertainty warning
+            // Large external fillet, large chamfer, or ambiguous corner: do not reject; produce uncertainty warning
             addWarn('PLAN-FILLET-UNCERTAIN-FEASIBILITY', `fillets_chamfers[${idx}]`,
-              `${isChamfer ? 'Chamfer' : 'External fillet'} dimension (${r} mm) exceeds nominal wall thickness (${thickness} mm); feasibility on target edges is unverified without CAD topology execution`);
+              `${isChamfer ? 'Chamfer' : (isExternalEdge ? 'External fillet' : 'Fillet')} dimension (${r} mm) exceeds nominal wall thickness (${thickness} mm); feasibility on target edges is unverified without CAD topology execution`);
           }
         }
       } else {

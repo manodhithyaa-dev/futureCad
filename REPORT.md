@@ -4,7 +4,7 @@
 **Project:** FutureCAD V2.1.1 (Client-Side Multi-Agent AI CAD Platform)  
 **Date:** November 2026  
 **Runtime Environment:** Client-Side Browser (Vanilla JavaScript, HTML5, CSS3, Local Ollama HTTP API)  
-**Test Suite Verdict:** **130 PASSED, 0 FAILED** across Test Suites A through CC (100% Pass Rate)  
+**Test Suite Verdict:** **144 PASSED, 0 FAILED** across Test Suites A through DD (100% Pass Rate)  
 **Final Assessment:** **READY FOR CONTROLLED TESTING**  
 
 ---
@@ -384,7 +384,8 @@ The automated regression test suite (`test_suite.js` and browser runner `test.ht
 | **AA**| **V2.1.1 Perpendicular Holes**| 6 | Perpendicular-plane clearance, L-bracket arm breakouts, Y axis | **PASS** |
 | **BB**| **V2.1.1 Fillet/Chamfer Class**| 4 | Large external fillet warning, large internal error, missing target | **PASS** |
 | **CC**| **V2.1.1 Malformed Robustness**| 11 | Missing BB with holes, null steps/holes/fillets, non-array inputs | **PASS** |
-| **TOTAL**| **All 29 Test Suites** | **130** | **Comprehensive Automated Regression Suite** | **130 / 130 PASS** |
+| **DD**| **V2.1.2 Target Classification**| 14 | External corner, outside corner, ambiguous target, contradictory tags | **PASS** |
+| **TOTAL**| **All 30 Test Suites** | **144** | **Comprehensive Automated Regression Suite** | **144 / 144 PASS** |
 
 ---
 
@@ -433,4 +434,4 @@ python generated_cad.py
 **VERDICT: READY FOR CONTROLLED TESTING**
 
 *Technical Justification:*  
-All P0, P1, and P2 defects, as well as the V2.1.1 final geometry validation patch requirements, have been completely resolved using deterministic, pure-JavaScript algorithms conforming strictly to the browser-only architecture. All 130 regression tests pass with zero errors. The application is robust, exception-immune, and ready for controlled user testing with local Ollama inference.
+All P0, P1, and P2 defects, as well as the V2.1.1 final geometry validation patch requirements, have been completely resolved using deterministic, pure-JavaScript algorithms conforming strictly to the browser-only architecture. All 144 regression tests pass with zero errors. The application is robust, exception-immune, and ready for controlled user testing with local Ollama inference.
