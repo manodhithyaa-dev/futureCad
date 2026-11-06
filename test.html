@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FutureCAD — Automated Verification & Regression Suite</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .test-container { max-width: 1100px; margin: 30px auto; padding: 0 20px; }
+  .test-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 24px; margin-bottom: 20px; }
+  .test-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+  .badge.pass { background: #133a28; color: var(--ok); border-color: var(--ok); }
+  .badge.fail { background: #4a191f; color: var(--err); border-color: var(--err); }
+  .log-box { background: #0a0c11; border: 1px solid var(--line); border-radius: 8px; padding: 16px; font: 12px/1.6 var(--mono); color: #bcd3ff; white-space: pre-wrap; word-break: break-word; max-height: 600px; overflow-y: auto; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo">◢</span><b>FutureCAD</b><span class="tag">In-Browser Regression Runner</span></div>
+  <div class="status-group">
+    <a href="index.html" class="btn" style="text-decoration:none; padding:4px 12px; font-size:12px;">← Back to App</a>
+  </div>
+</header>
+
+<main class="test-container">
+  <div class="test-card">
+    <div class="test-title">
+      <h2>Automated Regression Suite (Criteria A – T)</h2>
+      <span class="chip" id="suiteStatus"><i class="dot" id="suiteDot"></i><span id="suiteText">Running…</span></span>
+    </div>
+    <p class="muted" style="margin-bottom:16px;">
+      Executes the pure browser-side verification engine covering requirement schemas, deterministic geometry plan validation, reviewer severity policies, false ABSENT detection, repair stagnation, and honest verification reporting.
+    </p>
+    <div class="row" style="margin-bottom:16px;">
+      <button class="btn primary" id="btnRerun">↻ Re-run Test Suite</button>
+    </div>
+    <div class="log-box" id="testLog">Initializing test suite…\n</div>
+  </div>
+</main>
+
+<script type="module">
+  const logEl = document.getElementById('testLog');
+  const statusEl = document.getElementById('suiteText');
+  const dotEl = document.getElementById('suiteDot');
+
+  const origLog = console.log;
+  const origErr = console.error;
+
+  function append(text, isErr = false) {
+    logEl.textContent += text + '\n';
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  console.log = (...args) => {
+    origLog(...args);
+    append(args.join(' '));
+  };
+  console.error = (...args) => {
+    origErr(...args);
+    append(args.join(' '), true);
+  };
+
+  async function run() {
+    logEl.textContent = '';
+    statusEl.textContent = 'Running…';
+    dotEl.className = 'dot';
+    try {
+      // Dynamic import with cache buster
+      await import('./test_suite.js?t=' + Date.now());
+      statusEl.textContent = 'Completed';
+      dotEl.className = 'dot ok';
+    } catch (e) {
+      append('Execution error: ' + e.message, true);
+      statusEl.textContent = 'Failed';
+      dotEl.className = 'dot err';
+    }
+  }
+
+  document.getElementById('btnRerun').addEventListener('click', run);
+  run();
+</script>
+</body>
+</html>
