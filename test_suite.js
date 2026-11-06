@@ -934,6 +934,187 @@ cq.exporters.export(body, "part.stl")`;
 }
 
 // ----------------------------------------------------
+// AA. V2.1.1 PATCH: PERPENDICULAR-PLANE HOLE CLEARANCE & BOUNDARY RIGOR
+// ----------------------------------------------------
+console.log('\n[Test Suite AA] V2.1.1 Patch: Perpendicular-Plane Hole Clearance & Boundary Rigor');
+{
+  const lBracketPlan = {
+    coordinate_system: { units: 'mm', origin: [0, 0, 0] },
+    parameters: { length: 50, height: 80, width: 40, thickness: 4 },
+    steps: [
+      {
+        id: 1,
+        geometry: 'polyline_extrusion',
+        workplane: 'XZ',
+        profile_vertices: [[0, 0], [50, 0], [50, 4], [4, 4], [4, 80], [0, 80]],
+        extrusion_direction: '+Y',
+        extrusion_distance: 40,
+        resulting_bounding_box: { x_min: 0, x_max: 50, y_min: 0, y_max: 40, z_min: 0, z_max: 80 }
+      }
+    ],
+    expected_bounding_box: { x_min: 0, x_max: 50, y_min: 0, y_max: 40, z_min: 0, z_max: 80, x_len: 50, y_len: 40, z_len: 80 },
+    expected_solid_count: 1,
+    provisional_assumptions: [],
+    validation_steps: []
+  };
+
+  // AA1: [0.5, 20, 2], axis Z, diameter 5 MUST be rejected (breaks out in X perpendicular to Z)
+  const resBreakoutZ = V.validateGeometryPlan({
+    ...lBracketPlan,
+    holes: [{ id: 'HOLE-BREAK-Z', diameter: 5, center_xyz: [0.5, 20, 2], axis: 'Z' }]
+  });
+  assert(resBreakoutZ.valid === false, '[0.5, 20, 2] axis Z diameter 5 is rejected');
+  assert(resBreakoutZ.errors.some(e => e.id === 'PLAN-HOLE-EDGE-BREAKOUT'), 'Reports PLAN-HOLE-EDGE-BREAKOUT in X perpendicular to drill axis Z');
+
+  // AA2: [2, 20, 0.5], axis X, diameter 5 MUST be rejected (breaks out in Z perpendicular to X)
+  const resBreakoutX = V.validateGeometryPlan({
+    ...lBracketPlan,
+    holes: [{ id: 'HOLE-BREAK-X', diameter: 5, center_xyz: [2, 20, 0.5], axis: 'X' }]
+  });
+  assert(resBreakoutX.valid === false, '[2, 20, 0.5] axis X diameter 5 is rejected');
+  assert(resBreakoutX.errors.some(e => e.id === 'PLAN-HOLE-EDGE-BREAKOUT'), 'Reports PLAN-HOLE-EDGE-BREAKOUT in Z perpendicular to drill axis X');
+
+  // AA3: Valid hole on horizontal arm: [25, 20, 2], axis Z, diameter 5 passes
+  const resValidZ = V.validateGeometryPlan({
+    ...lBracketPlan,
+    holes: [{ id: 'HOLE-OK-Z', diameter: 5, center_xyz: [25, 20, 2], axis: 'Z' }]
+  });
+  assert(resValidZ.valid === true, 'Valid hole [25, 20, 2] axis Z passes');
+
+  // AA4: Valid hole on vertical arm: [2, 20, 25], axis X, diameter 5 passes
+  const resValidX = V.validateGeometryPlan({
+    ...lBracketPlan,
+    holes: [{ id: 'HOLE-OK-X', diameter: 5, center_xyz: [2, 20, 25], axis: 'X' }]
+  });
+  assert(resValidX.valid === true, 'Valid hole [2, 20, 25] axis X passes');
+
+  // AA5: Valid hole along Y axis: [2, 20, 50], axis Y, diameter 2 passes
+  const resValidY = V.validateGeometryPlan({
+    ...lBracketPlan,
+    holes: [{ id: 'HOLE-OK-Y', diameter: 2, center_xyz: [2, 20, 50], axis: 'Y' }]
+  });
+  assert(resValidY.valid === true, 'Valid hole [2, 20, 50] axis Y passes');
+
+  // AA6: Missing profile information reports unresolved warning
+  const resUnresolved = V.validateGeometryPlan({
+    coordinate_system: { units: 'mm' },
+    steps: [{ id: 1, geometry: 'box' }],
+    holes: [{ id: 'HOLE-UNRESOLVED', diameter: 4, center_xyz: [10, 10, 10], axis: 'Z' }]
+  });
+  assert(resUnresolved.warnings.some(w => w.id === 'PLAN-HOLE-UNRESOLVED-GEOMETRY'),
+    'Reports explicit PLAN-HOLE-UNRESOLVED-GEOMETRY warning when profile is absent');
+}
+
+// ----------------------------------------------------
+// BB. V2.1.1 PATCH: FILLET/CHAMFER TARGET CLASSIFICATION
+// ----------------------------------------------------
+console.log('\n[Test Suite BB] V2.1.1 Patch: Fillet/Chamfer Target Classification (Internal vs External)');
+{
+  const lBracketPlan = {
+    coordinate_system: { units: 'mm' },
+    parameters: { length: 50, height: 80, width: 40, thickness: 4 },
+    steps: [{ id: 1, geometry: 'box', workplane: 'XZ', resulting_bounding_box: 'box' }],
+    expected_bounding_box: { x_len: 50, y_len: 40, z_len: 80 },
+    expected_solid_count: 1,
+    provisional_assumptions: [],
+    validation_steps: []
+  };
+
+  // BB1: Large external-edge fillet (radius 8 mm on 4 mm thickness) produces warning, NOT error!
+  const resLargeExternal = V.validateGeometryPlan({
+    ...lBracketPlan,
+    fillets_chamfers: [{ id: 'FC-EXT', type: 'fillet', radius: 8, target: 'external_outer_edge' }]
+  });
+  assert(resLargeExternal.errors.length === 0, 'Large external fillet produces 0 blocking errors');
+  assert(resLargeExternal.warnings.some(w => w.id === 'PLAN-FILLET-UNCERTAIN-FEASIBILITY'),
+    'Large external fillet produces PLAN-FILLET-UNCERTAIN-FEASIBILITY warning');
+
+  // BB2: Large internal-corner fillet (radius 8 mm on 4 mm thickness) produces MAJOR error
+  const resLargeInternal = V.validateGeometryPlan({
+    ...lBracketPlan,
+    fillets_chamfers: [{ id: 'FC-INT', type: 'fillet', radius: 8, target: 'internal_concave_corner' }]
+  });
+  assert(resLargeInternal.errors.some(e => e.id === 'PLAN-FILLET-EXCEEDS-THICKNESS'),
+    'Large internal corner fillet produces PLAN-FILLET-EXCEEDS-THICKNESS error');
+
+  // BB3: Large chamfer (size 6 mm on 4 mm thickness) produces warning, NOT error
+  const resLargeChamfer = V.validateGeometryPlan({
+    ...lBracketPlan,
+    fillets_chamfers: [{ id: 'FC-CHAM', type: 'chamfer', size: 6, target: 'external_bracket_edge' }]
+  });
+  assert(resLargeChamfer.errors.length === 0, 'Large chamfer produces 0 blocking errors');
+  assert(resLargeChamfer.warnings.some(w => w.id === 'PLAN-FILLET-UNCERTAIN-FEASIBILITY'),
+    'Large chamfer produces PLAN-FILLET-UNCERTAIN-FEASIBILITY warning');
+
+  // BB4: Missing target geometry produces warning
+  const resMissingTarget = V.validateGeometryPlan({
+    ...lBracketPlan,
+    fillets_chamfers: [{ id: 'FC-NOTARGET', type: 'fillet', radius: 2 }]
+  });
+  assert(resMissingTarget.warnings.some(w => w.id === 'PLAN-FC-TARGET-MISSING'),
+    'Missing target geometry produces PLAN-FC-TARGET-MISSING warning');
+}
+
+// ----------------------------------------------------
+// CC. V2.1.1 PATCH: MALFORMED JSON INPUT ROBUSTNESS (NO RUNTIME CRASHES)
+// ----------------------------------------------------
+console.log('\n[Test Suite CC] V2.1.1 Patch: Malformed JSON Input Robustness');
+{
+  // CC1: Missing bounding box with holes does not throw
+  let threwCC1 = false;
+  try {
+    const resNoBB = V.validateGeometryPlan({
+      coordinate_system: { units: 'mm' },
+      steps: [{ id: 1, geometry: 'box', workplane: 'XY' }],
+      holes: [{ id: 'H1', diameter: 4, center_xyz: [10, 10, 10], axis: 'Z' }]
+    });
+    assert(resNoBB && typeof resNoBB.valid === 'boolean', 'Missing bounding box with holes handled gracefully');
+  } catch {
+    threwCC1 = true;
+  }
+  assert(!threwCC1, 'validateGeometryPlan does not throw when bounding box is missing');
+
+  // CC2: Null entries in steps, holes, and fillets_chamfers do not throw
+  let threwCC2 = false;
+  try {
+    const resNulls = V.validateGeometryPlan({
+      coordinate_system: { units: 'mm' },
+      steps: [null, { id: 1, geometry: 'box' }],
+      holes: [null, { id: 'H1', diameter: 4, center_xyz: [10, 10, 10], axis: 'Z' }],
+      fillets_chamfers: [null, { id: 'FC1', radius: 2 }]
+    });
+    assert(resNulls.errors.some(e => e.id === 'PLAN-STEP-INVALID'), 'Detects null in steps as PLAN-STEP-INVALID');
+    assert(resNulls.errors.some(e => e.id === 'PLAN-HOLE-INVALID'), 'Detects null in holes as PLAN-HOLE-INVALID');
+    assert(resNulls.errors.some(e => e.id === 'PLAN-FC-INVALID'), 'Detects null in fillets_chamfers as PLAN-FC-INVALID');
+  } catch {
+    threwCC2 = true;
+  }
+  assert(!threwCC2, 'validateGeometryPlan does not throw on null array elements');
+
+  // CC3: validatePlan handles null array elements without throwing
+  let threwCC3 = false;
+  try {
+    const planNulls = V.validatePlan({
+      coordinate_system: { units: 'mm' },
+      steps: [null],
+      expected_bounding_box: {},
+      expected_solid_count: 1,
+      validation_steps: [],
+      provisional_assumptions: []
+    });
+    assert(planNulls.some(e => e.includes('steps[0] must be an object')), 'validatePlan catches null step');
+  } catch {
+    threwCC3 = true;
+  }
+  assert(!threwCC3, 'validatePlan does not throw on null step');
+
+  // CC4: validatePolygonProfile handles non-array and malformed structures without throwing
+  assert(V.validatePolygonProfile(null).valid === false, 'validatePolygonProfile(null) returns valid: false');
+  assert(V.validatePolygonProfile('string').valid === false, 'validatePolygonProfile("string") returns valid: false');
+  assert(V.validatePolygonProfile([[0, 0], null, [10, 10]]).valid === false, 'validatePolygonProfile with null vertex returns valid: false');
+}
+
+// ----------------------------------------------------
 // SUMMARY
 // ----------------------------------------------------
 console.log('\n======================================================');
@@ -944,5 +1125,5 @@ if (failedCount > 0) {
   console.error(`❌ Regression test suite failed with ${failedCount} errors.`);
   if (typeof process !== 'undefined') process.exit(1);
 } else {
-  console.log('✅ All regression criteria (A through Z) verified successfully!');
+  console.log('✅ All regression criteria (A through CC) verified successfully!');
 }

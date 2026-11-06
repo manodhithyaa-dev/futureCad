@@ -137,12 +137,18 @@ export function segmentsIntersect(a, b, c, d, eps = 1e-7) {
 }
 
 export function pointInPolygon2D(point, polygon, eps = 1e-7) {
+  if (!isArr(polygon) || polygon.length < 3 || !isArr(point) || point.length < 2) {
+    return { inside: false, onBoundary: false };
+  }
   const [x, y] = point;
   let inside = false;
   const n = polygon.length;
   for (let i = 0, j = n - 1; i < n; j = i++) {
-    const xi = polygon[i][0], yi = polygon[i][1];
-    const xj = polygon[j][0], yj = polygon[j][1];
+    const p1 = polygon[i];
+    const p2 = polygon[j];
+    if (!isArr(p1) || !isArr(p2) || p1.length < 2 || p2.length < 2) continue;
+    const xi = p1[0], yi = p1[1];
+    const xj = p2[0], yj = p2[1];
 
     if (onSegment([x, y], [xi, yi], [xj, yj], eps)) {
       return { inside: true, onBoundary: true };
@@ -166,14 +172,64 @@ export function pointToSegmentDistance(p, a, b) {
 }
 
 export function distanceToPolygonPerimeter(point, polygon) {
+  if (!isArr(polygon) || polygon.length < 2) return Infinity;
   let minD = Infinity;
   const n = polygon.length;
   for (let i = 0; i < n; i++) {
     const next = polygon[(i + 1) % n];
-    const d = pointToSegmentDistance(point, polygon[i], next);
-    if (d < minD) minD = d;
+    if (isArr(polygon[i]) && isArr(next)) {
+      const d = pointToSegmentDistance(point, polygon[i], next);
+      if (d < minD) minD = d;
+    }
   }
   return minD;
+}
+
+/**
+ * Computes the 1D slice interval [min, max] of a 2D polygon along a cutting line.
+ * If isHorizontalSlice is true: cuts across horizontal line y = val, returns x-interval.
+ * If isHorizontalSlice is false: cuts across vertical line x = val, returns y-interval.
+ */
+export function getPolygonSliceInterval(polygon, val, isHorizontalSlice, targetPt) {
+  if (!isArr(polygon) || polygon.length < 3 || !Number.isFinite(val)) return null;
+  const ints = [];
+  const n = polygon.length;
+
+  for (let i = 0; i < n; i++) {
+    const p1 = polygon[i];
+    const p2 = polygon[(i + 1) % n];
+    if (!isArr(p1) || !isArr(p2) || p1.length < 2 || p2.length < 2) continue;
+
+    if (isHorizontalSlice) {
+      const y1 = p1[1], y2 = p2[1];
+      if ((y1 <= val && y2 >= val) || (y2 <= val && y1 >= val)) {
+        if (Math.abs(y2 - y1) > 1e-7) {
+          const t = (val - y1) / (y2 - y1);
+          ints.push(p1[0] + t * (p2[0] - p1[0]));
+        }
+      }
+    } else {
+      const x1 = p1[0], x2 = p2[0];
+      if ((x1 <= val && x2 >= val) || (x2 <= val && x1 >= val)) {
+        if (Math.abs(x2 - x1) > 1e-7) {
+          const t = (val - x1) / (x2 - x1);
+          ints.push(p1[1] + t * (p2[1] - p1[1]));
+        }
+      }
+    }
+  }
+
+  if (ints.length < 2) return null;
+  ints.sort((a, b) => a - b);
+
+  if (targetPt !== undefined && targetPt !== null && Number.isFinite(targetPt)) {
+    for (let i = 0; i + 1 < ints.length; i += 2) {
+      if (targetPt >= ints[i] - 1e-5 && targetPt <= ints[i + 1] + 1e-5) {
+        return [ints[i], ints[i + 1]];
+      }
+    }
+  }
+  return [ints[0], ints[ints.length - 1]];
 }
 
 /**
@@ -181,8 +237,8 @@ export function distanceToPolygonPerimeter(point, polygon) {
  * - Minimum 3 vertices
  * - Finite coordinates
  * - No zero-length edges
+ * - Non-adjacent segment self-intersection (e.g. bow-tie topology)
  * - Non-zero signed area (Shoelace)
- * - No self-intersecting non-adjacent edges (e.g. bow-tie)
  */
 export function validatePolygonProfile(vertices) {
   if (!isArr(vertices)) {
@@ -232,7 +288,6 @@ export function validatePolygonProfile(vertices) {
     const a = pts[i];
     const b = pts[(i + 1) % n];
     for (let j = i + 1; j < n; j++) {
-      // Exclude adjacent edges sharing a vertex
       if (j === i || j === (i + 1) % n || (i === 0 && j === n - 1)) continue;
       const c = pts[j];
       const d = pts[(j + 1) % n];
@@ -296,7 +351,8 @@ export function validatePlan(o) {
 /**
  * Deterministic Geometry Plan Validator.
  * Pure JavaScript: validates dimensional consistency, profile topology,
- * hole material membership (Point-in-Polygon), edge clearances, and fillet feasibility.
+ * hole material membership (Point-in-Polygon), edge clearances across perpendicular planes,
+ * and calibrated fillet/chamfer feasibility.
  */
 export function validateGeometryPlan(plan) {
   const errors = [];
@@ -340,12 +396,12 @@ export function validateGeometryPlan(plan) {
   }
 
   // 4. Expected Bounding Box
-  const bb = plan.expected_bounding_box;
+  const bb = isObj(plan.expected_bounding_box) ? plan.expected_bounding_box : null;
   let bbX = 0, bbY = 0, bbZ = 0;
-  if (isObj(bb)) {
-    bbX = bb.x_len || bb.x_mm || (bb.x_max !== undefined && bb.x_min !== undefined ? bb.x_max - bb.x_min : 0);
-    bbY = bb.y_len || bb.y_mm || (bb.y_max !== undefined && bb.y_min !== undefined ? bb.y_max - bb.y_min : 0);
-    bbZ = bb.z_len || bb.z_mm || (bb.z_max !== undefined && bb.z_min !== undefined ? bb.z_max - bb.z_min : 0);
+  if (bb) {
+    bbX = Number.isFinite(bb.x_len) ? bb.x_len : (Number.isFinite(bb.x_mm) ? bb.x_mm : (Number.isFinite(bb.x_max) && Number.isFinite(bb.x_min) ? bb.x_max - bb.x_min : 0));
+    bbY = Number.isFinite(bb.y_len) ? bb.y_len : (Number.isFinite(bb.y_mm) ? bb.y_mm : (Number.isFinite(bb.y_max) && Number.isFinite(bb.y_min) ? bb.y_max - bb.y_min : 0));
+    bbZ = Number.isFinite(bb.z_len) ? bb.z_len : (Number.isFinite(bb.z_mm) ? bb.z_mm : (Number.isFinite(bb.z_max) && Number.isFinite(bb.z_min) ? bb.z_max - bb.z_min : 0));
 
     if (bbX <= 0 || !Number.isFinite(bbX)) addErr('PLAN-BB-X', 'expected_bounding_box.x', `Bounding box X must be positive (found ${bbX})`);
     if (bbY <= 0 || !Number.isFinite(bbY)) addErr('PLAN-BB-Y', 'expected_bounding_box.y', `Bounding box Y must be positive (found ${bbY})`);
@@ -372,6 +428,10 @@ export function validateGeometryPlan(plan) {
 
   if (isArr(plan.steps)) {
     plan.steps.forEach((s, idx) => {
+      if (!isObj(s)) {
+        addErr('PLAN-STEP-INVALID', `steps[${idx}]`, `Step at index ${idx} must be a valid object`);
+        return;
+      }
       const stepId = s.id !== undefined ? s.id : idx + 1;
       stepIds.add(String(stepId));
       if (!primaryStep && s.profile_vertices) primaryStep = s;
@@ -409,18 +469,22 @@ export function validateGeometryPlan(plan) {
     });
   }
 
-  // 6. Geometry-Aware Hole Validation
+  // 6. Complete Hole Geometry & Perpendicular-Plane Clearance Validation
   const validAxes = ['X', 'Y', 'Z', '+X', '-X', '+Y', '-Y', '+Z', '-Z'];
 
   if (isArr(plan.holes)) {
     plan.holes.forEach((h, idx) => {
+      if (!isObj(h)) {
+        addErr('PLAN-HOLE-INVALID', `holes[${idx}]`, `Hole at index ${idx} must be a valid object`);
+        return;
+      }
       const hId = h.id || `HOLE-${idx + 1}`;
 
       // A. Strict Coordinate Validation
       if (!isArr(h.center_xyz) || h.center_xyz.length !== 3 || !h.center_xyz.every(Number.isFinite)) {
         addErr('PLAN-HOLE-COORDS-INVALID', `holes[${idx}].center_xyz`,
           `Hole ${hId} center_xyz must be an array of exactly 3 finite numbers [x, y, z]`);
-        return; // Cannot continue spatial checks without valid coordinates
+        return;
       }
 
       const [hx, hy, hz] = h.center_xyz;
@@ -434,7 +498,6 @@ export function validateGeometryPlan(plan) {
       // C. Axis Validation
       let axisStr = String(h.axis || '').trim().toUpperCase();
       if (!axisStr && h.reference_frame) {
-        // Fallback axis inference from workplane/face if stated
         if (h.workplane === 'YZ') axisStr = 'X';
         else if (h.workplane === 'XZ') axisStr = 'Y';
         else if (h.workplane === 'XY') axisStr = 'Z';
@@ -452,12 +515,12 @@ export function validateGeometryPlan(plan) {
       }
 
       // E. Bounding Box Containment
-      const xMin = bb.x_min !== undefined ? bb.x_min : 0;
-      const xMax = bb.x_max !== undefined ? bb.x_max : bbX;
-      const yMin = bb.y_min !== undefined ? bb.y_min : 0;
-      const yMax = bb.y_max !== undefined ? bb.y_max : bbY;
-      const zMin = bb.z_min !== undefined ? bb.z_min : 0;
-      const zMax = bb.z_max !== undefined ? bb.z_max : bbZ;
+      const xMin = bb && Number.isFinite(bb.x_min) ? bb.x_min : 0;
+      const xMax = bb && Number.isFinite(bb.x_max) ? bb.x_max : bbX;
+      const yMin = bb && Number.isFinite(bb.y_min) ? bb.y_min : 0;
+      const yMax = bb && Number.isFinite(bb.y_max) ? bb.y_max : bbY;
+      const zMin = bb && Number.isFinite(bb.z_min) ? bb.z_min : 0;
+      const zMax = bb && Number.isFinite(bb.z_max) ? bb.z_max : bbZ;
       const eps = 0.5;
 
       if (hx < xMin - eps || hx > xMax + eps || hy < yMin - eps || hy > yMax + eps || hz < zMin - eps || hz > zMax + eps) {
@@ -465,94 +528,158 @@ export function validateGeometryPlan(plan) {
           `Hole ${hId} center [${hx}, ${hy}, ${hz}] lies outside expected bounding box X:[${xMin},${xMax}] Y:[${yMin},${yMax}] Z:[${zMin},${zMax}]`);
       }
 
-      // F. Material Membership & Edge Clearance via Profile Projection
+      // F. Material Membership & Perpendicular-Plane Clearance Validation
       if (primaryStep && isArr(primaryStep.profile_vertices) && primaryStep.profile_vertices.length >= 3) {
         const wp = String(primaryStep.workplane || 'XZ').toUpperCase().replace(/[<>+-]/g, '');
-        let u = 0, v = 0, wCoord = 0;
-        let wMin = 0, wMax = 0;
+        let u = 0, v = 0;
 
         if (wp === 'XZ') {
-          u = hx; v = hz; wCoord = hy;
-          wMin = yMin; wMax = yMax;
+          u = hx; v = hz;
         } else if (wp === 'XY') {
-          u = hx; v = hy; wCoord = hz;
-          wMin = zMin; wMax = zMax;
+          u = hx; v = hy;
         } else if (wp === 'YZ') {
-          u = hy; v = hz; wCoord = hx;
-          wMin = xMin; wMax = xMax;
+          u = hy; v = hz;
         }
 
         const pip = pointInPolygon2D([u, v], primaryStep.profile_vertices);
-
-        // Test if hole center lies in actual material
         if (!pip.inside) {
           addErr('PLAN-HOLE-NOT-IN-MATERIAL', `holes[${idx}].center_xyz`,
             `Hole ${hId} center [${hx}, ${hy}, ${hz}] projects to (${u}, ${v}) in profile plane ${wp}, which is in empty space outside the solid material`);
         } else {
-          // Point is inside profile; check edge clearances
-          const dPerimeter = distanceToPolygonPerimeter([u, v], primaryStep.profile_vertices);
-
-          // If drilled along the extrusion axis (perpendicular to profile)
-          const isPerpendicular = (wp === 'XZ' && cleanAxis === 'Y') || (wp === 'XY' && cleanAxis === 'Z') || (wp === 'YZ' && cleanAxis === 'X');
-          if (isPerpendicular) {
-            const clearance = dPerimeter - radius;
-            if (clearance < -0.05) {
-              addErr('PLAN-HOLE-EDGE-BREAKOUT', `holes[${idx}].center_xyz`,
-                `Hole ${hId} (radius ${radius} mm) at (${u}, ${v}) breaks outside profile perimeter (distance: ${dPerimeter.toFixed(2)} mm, clearance: ${clearance.toFixed(2)} mm)`);
-            } else if (clearance < 1.0) {
-              addWarn('PLAN-HOLE-EDGE-MARGIN', `holes[${idx}].center_xyz`,
-                `Hole ${hId} has minimal margin (< 1.0 mm) to profile perimeter`);
+          // Point is inside profile: now validate circular opening in the 2D plane PERPENDICULAR to the drilling axis
+          if (wp === 'XZ') {
+            if (cleanAxis === 'Y') {
+              // Drilling axis is Y -> perpendicular plane is (X, Z) [the profile plane itself]
+              const dPerimeter = distanceToPolygonPerimeter([hx, hz], primaryStep.profile_vertices);
+              const clearance = dPerimeter - radius;
+              if (clearance < -0.05) {
+                addErr('PLAN-HOLE-EDGE-BREAKOUT', `holes[${idx}].center_xyz`,
+                  `Hole ${hId} (radius ${radius} mm) at (${hx}, ${hz}) breaks outside profile perimeter in XZ plane (clearance: ${clearance.toFixed(2)} mm)`);
+              } else if (clearance < 1.0) {
+                addWarn('PLAN-HOLE-EDGE-MARGIN', `holes[${idx}].center_xyz`,
+                  `Hole ${hId} has minimal edge margin (< 1.0 mm) to profile perimeter in XZ`);
+              }
+            } else if (cleanAxis === 'Z') {
+              // Drilling axis is Z -> perpendicular plane is (X, Y)
+              // 1. Material interval in X at height Z = hz
+              const xInterval = getPolygonSliceInterval(primaryStep.profile_vertices, hz, true, hx);
+              if (xInterval) {
+                const [xArmMin, xArmMax] = xInterval;
+                const cX1 = hx - xArmMin - radius;
+                const cX2 = xArmMax - hx - radius;
+                if (cX1 < -0.05 || cX2 < -0.05) {
+                  addErr('PLAN-HOLE-EDGE-BREAKOUT', `holes[${idx}].center_xyz`,
+                    `Hole ${hId} (radius ${radius} mm) at X=${hx} breaks outside material boundary [${xArmMin}, ${xArmMax}] perpendicular to drill axis Z (clearance: ${Math.min(cX1, cX2).toFixed(2)} mm)`);
+                }
+              }
+              // 2. Extrusion width interval in Y
+              const cY1 = hy - yMin - radius;
+              const cY2 = yMax - hy - radius;
+              if (cY1 < -0.05 || cY2 < -0.05) {
+                addErr('PLAN-HOLE-EDGE-BREAKOUT', `holes[${idx}].center_xyz`,
+                  `Hole ${hId} (radius ${radius} mm) at Y=${hy} breaks outside part width [${yMin}, ${yMax}] perpendicular to drill axis Z`);
+              }
+            } else if (cleanAxis === 'X') {
+              // Drilling axis is X -> perpendicular plane is (Y, Z)
+              // 1. Material interval in Z at coordinate X = hx
+              const zInterval = getPolygonSliceInterval(primaryStep.profile_vertices, hx, false, hz);
+              if (zInterval) {
+                const [zArmMin, zArmMax] = zInterval;
+                const cZ1 = hz - zArmMin - radius;
+                const cZ2 = zArmMax - hz - radius;
+                if (cZ1 < -0.05 || cZ2 < -0.05) {
+                  addErr('PLAN-HOLE-EDGE-BREAKOUT', `holes[${idx}].center_xyz`,
+                    `Hole ${hId} (radius ${radius} mm) at Z=${hz} breaks outside material boundary [${zArmMin}, ${zArmMax}] perpendicular to drill axis X (clearance: ${Math.min(cZ1, cZ2).toFixed(2)} mm)`);
+                }
+              }
+              // 2. Extrusion width interval in Y
+              const cY1 = hy - yMin - radius;
+              const cY2 = yMax - hy - radius;
+              if (cY1 < -0.05 || cY2 < -0.05) {
+                addErr('PLAN-HOLE-EDGE-BREAKOUT', `holes[${idx}].center_xyz`,
+                  `Hole ${hId} (radius ${radius} mm) at Y=${hy} breaks outside part width [${yMin}, ${yMax}] perpendicular to drill axis X`);
+              }
             }
           } else {
-            // Hole drilled along an axis within the profile plane (e.g. through a wall)
-            // Check clearance along the extrusion width direction wCoord
-            const clearanceW1 = wCoord - wMin - radius;
-            const clearanceW2 = wMax - wCoord - radius;
-            if (clearanceW1 < -0.05 || clearanceW2 < -0.05) {
-              addErr('PLAN-HOLE-EDGE-BREAKOUT', `holes[${idx}].center_xyz`,
-                `Hole ${hId} (radius ${radius} mm) at width ${wCoord} breaks outside part boundary [${wMin}, ${wMax}] in extrusion direction`);
+            // General perpendicular plane check using face bounding box
+            let uCoord = 0, uRange = [0, 0], vCoord = 0, vRange = [0, 0];
+            if (cleanAxis === 'Z') {
+              uCoord = hx; uRange = [xMin, xMax];
+              vCoord = hy; vRange = [yMin, yMax];
+            } else if (cleanAxis === 'X') {
+              uCoord = hy; uRange = [yMin, yMax];
+              vCoord = hz; vRange = [zMin, zMax];
+            } else if (cleanAxis === 'Y') {
+              uCoord = hx; uRange = [xMin, xMax];
+              vCoord = hz; vRange = [zMin, zMax];
             }
+            const cU1 = uCoord - uRange[0] - radius, cU2 = uRange[1] - uCoord - radius;
+            const cV1 = vCoord - vRange[0] - radius, cV2 = vRange[1] - vCoord - radius;
+            if (cU1 < -0.05 || cU2 < -0.05 || cV1 < -0.05 || cV2 < -0.05) {
+              addErr('PLAN-HOLE-EDGE-BREAKOUT', `holes[${idx}].center_xyz`,
+                `Hole ${hId} (radius ${radius} mm) breaks outside face boundary perpendicular to drill axis ${cleanAxis}`);
+            }
+          }
 
-            // Material thickness check along drill axis
-            if (h.depth !== undefined && h.depth > 0) {
-              const nominalThickness = typeof params.thickness === 'number' ? params.thickness : (typeof params.t === 'number' ? params.t : null);
-              if (nominalThickness && h.depth > nominalThickness + 0.1 && !h.through) {
-                addWarn('PLAN-HOLE-DEPTH-EXCEEDS-MATERIAL', `holes[${idx}].depth`,
-                  `Hole ${hId} depth (${h.depth} mm) exceeds nominal wall thickness (${nominalThickness} mm)`);
-              }
+          // Depth check against nominal material thickness along drill axis
+          if (h.depth !== undefined && h.depth > 0 && !h.through) {
+            const nominalThickness = typeof params.thickness === 'number' ? params.thickness : (typeof params.t === 'number' ? params.t : null);
+            if (nominalThickness && h.depth > nominalThickness + 0.1) {
+              addWarn('PLAN-HOLE-DEPTH-EXCEEDS-MATERIAL', `holes[${idx}].depth`,
+                `Hole ${hId} depth (${h.depth} mm) exceeds nominal wall thickness (${nominalThickness} mm)`);
             }
           }
         }
       } else {
         // Fallback for non-profile geometries (e.g. primitive box steps)
-        addWarn('PLAN-HOLE-UNVERIFIED-TOPOLOGY', `holes[${idx}]`,
-          `Hole ${hId} material containment could not be proven with 2D profile projection; checked bounding box only`);
+        addWarn('PLAN-HOLE-UNRESOLVED-GEOMETRY', `holes[${idx}]`,
+          `Hole ${hId} material containment could not be proven with 2D profile projection; checked face bounding box only`);
 
-        // Check edge clearances along bounding box dimensions
-        if (hy >= yMin && hy <= yMax && radius > 0) {
-          const clearanceY1 = hy - yMin - radius;
-          const clearanceY2 = yMax - hy - radius;
-          if (clearanceY1 < -0.05 || clearanceY2 < -0.05) {
-            addErr('PLAN-HOLE-EDGE-BREAKOUT', `holes[${idx}].center_xyz`,
-              `Hole ${hId} (radius ${radius} mm) at Y=${hy} breaks outside part width [${yMin}, ${yMax}] (negative clearance)`);
-          } else if (clearanceY1 < 1.0 || clearanceY2 < 1.0) {
-            addWarn('PLAN-HOLE-EDGE-MARGIN', `holes[${idx}].center_xyz`,
-              `Hole ${hId} has minimal edge margin (< 1.0 mm) to part boundary in Y`);
-          }
+        // Check edge clearances along perpendicular face plane bounding box
+        let uCoord = 0, uMin = 0, uMax = 0, vCoord = 0, vMin = 0, vMax = 0;
+        if (cleanAxis === 'Z') {
+          uCoord = hx; uMin = xMin; uMax = xMax;
+          vCoord = hy; vMin = yMin; vMax = yMax;
+        } else if (cleanAxis === 'X') {
+          uCoord = hy; uMin = yMin; uMax = yMax;
+          vCoord = hz; vMin = zMin; vMax = zMax;
+        } else if (cleanAxis === 'Y') {
+          uCoord = hx; uMin = xMin; uMax = xMax;
+          vCoord = hz; vMin = zMin; vMax = zMax;
+        }
+
+        const cU1 = uCoord - uMin - radius, cU2 = uMax - uCoord - radius;
+        const cV1 = vCoord - vMin - radius, cV2 = vMax - vCoord - radius;
+        if (cU1 < -0.05 || cU2 < -0.05 || cV1 < -0.05 || cV2 < -0.05) {
+          addErr('PLAN-HOLE-EDGE-BREAKOUT', `holes[${idx}].center_xyz`,
+            `Hole ${hId} (radius ${radius} mm) breaks outside face boundary perpendicular to drill axis ${cleanAxis}`);
         }
       }
     });
   }
 
-  // 7. Fillet & Chamfer Validation
+  // 7. Calibrated Fillet & Chamfer Feasibility Validation
   if (isArr(plan.fillets_chamfers)) {
     const thickness = typeof params.thickness === 'number' ? params.thickness : (typeof params.t === 'number' ? params.t : null);
 
     plan.fillets_chamfers.forEach((fc, idx) => {
+      if (!isObj(fc)) {
+        addErr('PLAN-FC-INVALID', `fillets_chamfers[${idx}]`, `Fillet/chamfer at index ${idx} must be a valid object`);
+        return;
+      }
       const fcId = fc.id || `FC-${idx + 1}`;
       const isChamfer = String(fc.type || '').toLowerCase() === 'chamfer';
-      let r = null;
+      const targetStr = String(fc.target || '').toLowerCase();
+      const isInternalCorner = targetStr.includes('internal') || targetStr.includes('inside') || targetStr.includes('concave') || targetStr.includes('corner');
+      const isExternalEdge = targetStr.includes('external') || targetStr.includes('outside') || targetStr.includes('convex') || targetStr.includes('outer');
 
+      // Check missing target geometry
+      if (!fc.target || typeof fc.target !== 'string' || !fc.target.trim()) {
+        addWarn('PLAN-FC-TARGET-MISSING', `fillets_chamfers[${idx}].target`,
+          `${isChamfer ? 'Chamfer' : 'Fillet'} ${fcId} has unspecified target geometry; edge feasibility cannot be evaluated`);
+      }
+
+      let r = null;
       if (isChamfer) {
         if (typeof fc.size === 'number') r = fc.size;
         else if (typeof fc.distance === 'number') r = fc.distance;
@@ -571,9 +698,14 @@ export function validateGeometryPlan(plan) {
           const errId = isChamfer ? 'PLAN-CHAMFER-NONPOSITIVE' : 'PLAN-FILLET-NONPOSITIVE';
           addErr(errId, `fillets_chamfers[${idx}].size`, `${isChamfer ? 'Chamfer' : 'Fillet'} ${fcId} dimension must be positive and finite (found ${r})`);
         } else if (thickness !== null && thickness > 0) {
-          if (r > thickness + 0.01) {
+          if (isInternalCorner && !isChamfer && r > thickness + 0.01) {
+            // Demonstrable geometry failure: internal concave corner fillet exceeding wall thickness collapses opposing wall
             addErr('PLAN-FILLET-EXCEEDS-THICKNESS', `fillets_chamfers[${idx}].radius`,
-              `${isChamfer ? 'Chamfer' : 'Fillet'} dimension (${r} mm) exceeds wall thickness (${thickness} mm), which risks topology collapse`, 'major');
+              `Internal corner fillet radius (${r} mm) exceeds wall thickness (${thickness} mm), which demonstrably collapses opposing wall topology`, 'major');
+          } else if (r > thickness + 0.01) {
+            // Large external fillet or large chamfer: not an automatic violation; produce uncertainty warning
+            addWarn('PLAN-FILLET-UNCERTAIN-FEASIBILITY', `fillets_chamfers[${idx}]`,
+              `${isChamfer ? 'Chamfer' : 'External fillet'} dimension (${r} mm) exceeds nominal wall thickness (${thickness} mm); feasibility on target edges is unverified without CAD topology execution`);
           }
         }
       } else {
@@ -612,9 +744,6 @@ export function validateGeometryPlan(plan) {
 // LAYER 4: LEXICAL SCANNER & PYTHON PARSING
 // ==========================================
 
-/**
- * Strips comments from Python code while preserving all string literal contents.
- */
 export function stripPythonCommentsOnly(code) {
   let out = '';
   let i = 0;
@@ -655,166 +784,6 @@ export function stripPythonCommentsOnly(code) {
   return out;
 }
 
-/**
- * Strips both comments and string literal contents, leaving empty quotes ""
- * to represent executable tokens without false string matches.
- */
-export function stripPythonCommentsAndStrings(code) {
-  let out = '';
-  let i = 0;
-  const s = String(code || '');
-  const n = s.length;
-
-  while (i < n) {
-    const c = s[i];
-    if (c === '"' || c === "'") {
-      const isTriple = s.startsWith(c.repeat(3), i);
-      const q = isTriple ? c.repeat(3) : c;
-      i += q.length;
-      out += '""';
-      while (i < n) {
-        if (s[i] === '\\') {
-          i += 2;
-          continue;
-        }
-        if (s.startsWith(q, i)) {
-          i += q.length;
-          break;
-        }
-        if (!isTriple && s[i] === '\n') {
-          out += '\n';
-          i++;
-          break;
-        }
-        if (s[i] === '\n') out += '\n';
-        i++;
-      }
-      continue;
-    }
-    if (c === '#') {
-      while (i < n && s[i] !== '\n') i++;
-      continue;
-    }
-    out += c;
-    i++;
-  }
-  return out;
-}
-
-export function scanPython(code) {
-  const stack = [];
-  const pairs = { ')': '(', ']': '[', '}': '{' };
-  let i = 0;
-  const n = code.length;
-  while (i < n) {
-    const c = code[i];
-    if (c === '#') {
-      while (i < n && code[i] !== '\n') i++;
-      continue;
-    }
-    if (c === '"' || c === "'") {
-      const tri = code.startsWith(c.repeat(3), i);
-      const q = tri ? c.repeat(3) : c;
-      i += q.length;
-      let closed = false;
-      while (i < n) {
-        if (code[i] === '\\') {
-          i += 2;
-          continue;
-        }
-        if (code.startsWith(q, i)) {
-          i += q.length;
-          closed = true;
-          break;
-        }
-        if (!tri && code[i] === '\n') break;
-        i++;
-      }
-      if (!closed) return { ok: false, reason: 'unterminated string literal' };
-      continue;
-    }
-    if ('([{'.includes(c)) stack.push(c);
-    else if (')]}'.includes(c) && stack.pop() !== pairs[c]) return { ok: false, reason: `unbalanced '${c}'` };
-    i++;
-  }
-  return stack.length ? { ok: false, reason: `${stack.length} unclosed bracket(s)` } : { ok: true };
-}
-
-export function checkComplete(code) {
-  const exec = stripPythonCommentsAndStrings(code);
-  if (!/^[ \t]*import\s+cadquery\s+as\s+cq\b/m.test(exec))
-    return { complete: false, reason: 'missing "import cadquery as cq"' };
-  const sc = scanPython(code);
-  if (!sc.ok) return { complete: false, reason: 'program is cut off or malformed (' + sc.reason + ')' };
-  const lines = code.split('\n').map(l => l.trimEnd()).filter(l => l.trim() && !l.trim().startsWith('#'));
-  const last = lines[lines.length - 1] || '';
-  if (/[,\\+\-*\/=:(\[{.]$/.test(last)) return { complete: false, reason: 'last line looks unfinished: ' + last.trim().slice(0, 60) };
-  if (lines.length < 3) return { complete: false, reason: 'program is too short to be complete' };
-  return { complete: true };
-}
-
-const IMPORT_G = /^[ \t]*import\s+cadquery\s+as\s+cq\b/gm;
-
-/** Extracts ONLY the first Python program from model output; never concatenates repeats. */
-export function extractFirstProgram(text) {
-  let body, fenceClosed = false;
-  const open = /```(?:python|py)[ \t]*\r?\n/i.exec(text) || /```[ \t]*\r?\n(?=[ \t]*(?:#|import|from))/.exec(text);
-  if (open) {
-    const start = open.index + open[0].length, close = text.indexOf('```', start);
-    fenceClosed = close >= 0;
-    body = fenceClosed ? text.slice(start, close) : text.slice(start);
-  } else {
-    const m = /^[ \t]*import\s+cadquery\s+as\s+cq\b/m.exec(text);
-    if (!m) return { code: '', complete: false, fenceClosed: false, repeated: false, reason: 'no Python code found in response' };
-    body = text.slice(m.index);
-  }
-  const imports = [...body.matchAll(IMPORT_G)];
-  let repeated = false;
-  if (imports.length > 1) {
-    body = body.slice(0, imports[1].index);
-    repeated = true;
-  }
-  body = body.replace(/\s+$/, '') + '\n';
-  return { code: body, fenceClosed, repeated, ...checkComplete(body) };
-}
-
-/** Streaming predicate: stop as soon as the first complete program is available. */
-export function shouldStopStreaming(text, piece, tokens) {
-  if (!(piece.includes('`') || piece.includes('cq') || tokens % 16 === 0)) return false;
-  const ex = extractFirstProgram(text);
-  return ex.complete && (ex.fenceClosed || ex.repeated);
-}
-
-// ==========================================
-// LAYER 5: STATIC CADQUERY CHECKS (LEXICAL)
-// ==========================================
-
-export const INVALID_METHODS = [
-  'extrude_bidir',
-  'extrudeBidir',
-  'extrude_both',
-  'fillet_edges',
-  'fillet_all',
-  'chamfer_edges',
-  'chamfer_all',
-  'hole_at',
-  'cutHole',
-  'cut_hole',
-  'add_hole',
-  'CadQuery.Workplane',
-  'cq.WorkPlane',
-  'filletQ',
-  'chamferQ',
-  'cq.Query',
-  'make_box',
-  'create_box',
-  'add_fillet'
-];
-
-/**
- * Tokenizes Python string literals into placeholders __STR_n__ while stripping comments,
- * enabling clean lexical inspection of executable call expressions and arguments.
- */
 export function tokenizePythonStrings(code) {
   let codeWithoutComments = '';
   let i = 0;
@@ -858,10 +827,6 @@ export function tokenizePythonStrings(code) {
   return { codeTokens: codeWithoutComments, stringMap };
 }
 
-/**
- * Checks whether an export operation targeting the specified extension (.step or .stl)
- * is called in executable code (not commented-out and not merely embedded inside a string literal).
- */
 export function hasExecutableExport(code, ext) {
   const { codeTokens, stringMap } = tokenizePythonStrings(code);
   const re = /(?:exportStep|exportStl|\.export|exporters\.export)\s*\(([\s\S]*?)\)/gi;
@@ -884,9 +849,114 @@ export function hasExecutableExport(code, ext) {
   return false;
 }
 
-/**
- * Checks executable code only (ignores comments and string literals).
- */
+export function scanPython(code) {
+  const stack = [];
+  const pairs = { ')': '(', ']': '[', '}': '{' };
+  let i = 0;
+  const n = code.length;
+  while (i < n) {
+    const c = code[i];
+    if (c === '#') {
+      while (i < n && code[i] !== '\n') i++;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      const tri = code.startsWith(c.repeat(3), i);
+      const q = tri ? c.repeat(3) : c;
+      i += q.length;
+      let closed = false;
+      while (i < n) {
+        if (code[i] === '\\') {
+          i += 2;
+          continue;
+        }
+        if (code.startsWith(q, i)) {
+          i += q.length;
+          closed = true;
+          break;
+        }
+        if (!tri && code[i] === '\n') break;
+        i++;
+      }
+      if (!closed) return { ok: false, reason: 'unterminated string literal' };
+      continue;
+    }
+    if ('([{'.includes(c)) stack.push(c);
+    else if (')]}'.includes(c) && stack.pop() !== pairs[c]) return { ok: false, reason: `unbalanced '${c}'` };
+    i++;
+  }
+  return stack.length ? { ok: false, reason: `${stack.length} unclosed bracket(s)` } : { ok: true };
+}
+
+export function checkComplete(code) {
+  const { codeTokens } = tokenizePythonStrings(code);
+  if (!/^[ \t]*import\s+cadquery\s+as\s+cq\b/m.test(codeTokens))
+    return { complete: false, reason: 'missing "import cadquery as cq"' };
+  const sc = scanPython(code);
+  if (!sc.ok) return { complete: false, reason: 'program is cut off or malformed (' + sc.reason + ')' };
+  const lines = code.split('\n').map(l => l.trimEnd()).filter(l => l.trim() && !l.trim().startsWith('#'));
+  const last = lines[lines.length - 1] || '';
+  if (/[,\\+\-*\/=:(\[{.]$/.test(last)) return { complete: false, reason: 'last line looks unfinished: ' + last.trim().slice(0, 60) };
+  if (lines.length < 3) return { complete: false, reason: 'program is too short to be complete' };
+  return { complete: true };
+}
+
+const IMPORT_G = /^[ \t]*import\s+cadquery\s+as\s+cq\b/gm;
+
+export function extractFirstProgram(text) {
+  let body, fenceClosed = false;
+  const open = /```(?:python|py)[ \t]*\r?\n/i.exec(text) || /```[ \t]*\r?\n(?=[ \t]*(?:#|import|from))/.exec(text);
+  if (open) {
+    const start = open.index + open[0].length, close = text.indexOf('```', start);
+    fenceClosed = close >= 0;
+    body = fenceClosed ? text.slice(start, close) : text.slice(start);
+  } else {
+    const m = /^[ \t]*import\s+cadquery\s+as\s+cq\b/m.exec(text);
+    if (!m) return { code: '', complete: false, fenceClosed: false, repeated: false, reason: 'no Python code found in response' };
+    body = text.slice(m.index);
+  }
+  const imports = [...body.matchAll(IMPORT_G)];
+  let repeated = false;
+  if (imports.length > 1) {
+    body = body.slice(0, imports[1].index);
+    repeated = true;
+  }
+  body = body.replace(/\s+$/, '') + '\n';
+  return { code: body, fenceClosed, repeated, ...checkComplete(body) };
+}
+
+export function shouldStopStreaming(text, piece, tokens) {
+  if (!(piece.includes('`') || piece.includes('cq') || tokens % 16 === 0)) return false;
+  const ex = extractFirstProgram(text);
+  return ex.complete && (ex.fenceClosed || ex.repeated);
+}
+
+// ==========================================
+// LAYER 5: STATIC CADQUERY CHECKS (LEXICAL)
+// ==========================================
+
+export const INVALID_METHODS = [
+  'extrude_bidir',
+  'extrudeBidir',
+  'extrude_both',
+  'fillet_edges',
+  'fillet_all',
+  'chamfer_edges',
+  'chamfer_all',
+  'hole_at',
+  'cutHole',
+  'cut_hole',
+  'add_hole',
+  'CadQuery.Workplane',
+  'cq.WorkPlane',
+  'filletQ',
+  'chamferQ',
+  'cq.Query',
+  'make_box',
+  'create_box',
+  'add_fillet'
+];
+
 export function staticChecks(code) {
   const out = [];
   let nextId = 1;
@@ -906,33 +976,32 @@ export function staticChecks(code) {
   };
 
   const { codeTokens } = tokenizePythonStrings(code);
-  const execCode = stripPythonCommentsAndStrings(code);
   const lineOf = re => (code.split('\n').find(l => re.test(l)) || '').trim();
 
   // 1. Required import (in executable code)
-  if (!/^[ \t]*import\s+cadquery\s+as\s+cq\b/m.test(execCode)) {
+  if (!/^[ \t]*import\s+cadquery\s+as\s+cq\b/m.test(codeTokens)) {
     add('blocking', 'syntax', 'ABSENT: import cadquery as cq', 'Required CadQuery import is missing in executable code.', 'Add "import cadquery as cq" at top.');
   }
 
   // 2. Forbidden / invented APIs (in executable code)
   for (const m of INVALID_METHODS) {
     const re = new RegExp(m.replace('.', '\\.') + '\\b');
-    if (re.test(execCode)) {
+    if (re.test(codeTokens)) {
       add('blocking', 'api', lineOf(re), `"${m}" is an invented/unsupported CadQuery API.`, 'Replace with standard CadQuery calls (extrude, hole, fillet, union, cut).');
     }
   }
 
   // 3. Workplane instantiation (in executable code)
-  if (!/\bcq\.Workplane\s*\(/.test(execCode)) {
+  if (!/\bcq\.Workplane\s*\(/.test(codeTokens)) {
     add('blocking', 'geometry', 'ABSENT: cq.Workplane(', 'No cq.Workplane is instantiated in executable code.', 'Build geometry using cq.Workplane(...).');
   }
 
-  // 4. STEP export verification (must be an executable call referencing a .step target)
+  // 4. STEP export verification
   if (!hasExecutableExport(code, 'step')) {
     add('major', 'exports', 'ABSENT: STEP export', 'No executable STEP export call found (commented-out or string literals do not count).', 'Add cq.exporters.export(result, "part.step").');
   }
 
-  // 5. STL export verification (must be an executable call referencing a .stl target)
+  // 5. STL export verification
   if (!hasExecutableExport(code, 'stl')) {
     add('major', 'exports', 'ABSENT: STL export', 'No executable STL export call found (commented-out or string literals do not count).', 'Add cq.exporters.export(result, "part.stl").');
   }
@@ -944,7 +1013,7 @@ export function staticChecks(code) {
   }
 
   // 7. Repeated imports / duplicated program
-  if ((execCode.match(IMPORT_G) || []).length > 1) {
+  if ((codeTokens.match(IMPORT_G) || []).length > 1) {
     add('blocking', 'maintainability', lineOf(/import\s+cadquery/), 'Program text is repeated (multiple imports).', 'Keep exactly one complete program.');
   }
 
@@ -978,11 +1047,6 @@ export function validateReview(o) {
   return e;
 }
 
-/**
- * Checks whether an ABSENT claim is actually true or a hallucination/false positive.
- * CRITICAL: Operates on EXECUTABLE code tokens; comments and string literals
- * do not satisfy required operations.
- */
 export function verifyAbsentClaim(evidenceStr, code) {
   const m = String(evidenceStr || '').match(/^ABSENT:\s*(.+)$/i);
   if (!m) return { isAbsentClaim: false };
@@ -990,63 +1054,62 @@ export function verifyAbsentClaim(evidenceStr, code) {
   const targetLower = rawTarget.toLowerCase();
 
   const { codeTokens } = tokenizePythonStrings(code);
-  const execCode = stripPythonCommentsAndStrings(code);
 
   // 1. CadQuery import
-  if (targetLower.includes('import') && /^[ \t]*import\s+cadquery\s+as\s+cq\b/m.test(execCode)) {
+  if (targetLower.includes('import') && /^[ \t]*import\s+cadquery\s+as\s+cq\b/m.test(codeTokens)) {
     return { isAbsentClaim: true, isActuallyPresent: true, reason: 'import cadquery as cq is present in executable code' };
   }
 
-  // 2. STEP export (must be an executable call, not in comment/string)
+  // 2. STEP export
   if (targetLower.includes('step')) {
     if (hasExecutableExport(code, 'step')) {
       return { isAbsentClaim: true, isActuallyPresent: true, reason: 'STEP export is present in executable code' };
     }
   }
 
-  // 3. STL export (must be an executable call, not in comment/string)
+  // 3. STL export
   if (targetLower.includes('stl')) {
     if (hasExecutableExport(code, 'stl')) {
       return { isAbsentClaim: true, isActuallyPresent: true, reason: 'STL export is present in executable code' };
     }
   }
 
-  // 4. Hole operations (in executable code tokens)
+  // 4. Hole operations
   if (targetLower.includes('hole') && /(\.hole\s*\(|\.circle\s*\([^)]*\)\.extrude|cboreHole\s*\(|cskHole\s*\()/i.test(codeTokens)) {
     return { isAbsentClaim: true, isActuallyPresent: true, reason: 'Hole feature is present in executable code' };
   }
 
-  // 5. Fillet operations (in executable code tokens)
+  // 5. Fillet operations
   if (targetLower.includes('fillet') && /\.fillet\s*\(/i.test(codeTokens)) {
     return { isAbsentClaim: true, isActuallyPresent: true, reason: 'Fillet feature is present in executable code' };
   }
 
-  // 6. Chamfer operations (in executable code tokens)
+  // 6. Chamfer operations
   if (targetLower.includes('chamfer') && /\.chamfer\s*\(/i.test(codeTokens)) {
     return { isAbsentClaim: true, isActuallyPresent: true, reason: 'Chamfer feature is present in executable code' };
   }
 
-  // 7. Workplane operations (in executable code tokens)
+  // 7. Workplane operations
   if (targetLower.includes('workplane') && /\bcq\.Workplane\s*\(/i.test(codeTokens)) {
     return { isAbsentClaim: true, isActuallyPresent: true, reason: 'cq.Workplane is present in executable code' };
   }
 
-  // 8. Box operations (in executable code tokens)
+  // 8. Box operations
   if (targetLower.includes('box') && /\.box\s*\(/i.test(codeTokens)) {
     return { isAbsentClaim: true, isActuallyPresent: true, reason: 'box construction is present in executable code' };
   }
 
-  // 9. Extrude operations (in executable code tokens)
+  // 9. Extrude operations
   if (targetLower.includes('extrude') && /\.extrude\s*\(/i.test(codeTokens)) {
     return { isAbsentClaim: true, isActuallyPresent: true, reason: 'extrude operation is present in executable code' };
   }
 
-  // 10. Cut operations (in executable code tokens)
+  // 10. Cut operations
   if (targetLower.includes('cut') && /\.cut\s*\(/i.test(codeTokens)) {
     return { isAbsentClaim: true, isActuallyPresent: true, reason: 'cut operation is present in executable code' };
   }
 
-  // 11. Generic token presence in executable code
+  // 11. Generic token presence
   const cleanTarget = rawTarget.replace(/['"`]/g, '').trim();
   if (cleanTarget.length >= 3 && codeTokens.toLowerCase().includes(cleanTarget.toLowerCase())) {
     return { isAbsentClaim: true, isActuallyPresent: true, reason: `Target "${cleanTarget}" is present in executable code` };
@@ -1055,13 +1118,6 @@ export function verifyAbsentClaim(evidenceStr, code) {
   return { isAbsentClaim: true, isActuallyPresent: false };
 }
 
-/**
- * Merges LLM reviewer findings with deterministic static checks.
- * STRICT SEVERITY POLICY:
- * - BLOCKING & MAJOR findings prevent approval.
- * - MINOR & INFO findings do not prevent approval.
- * - Deterministic static checks take precedence over LLM assertions.
- */
 export function mergeReview(raw, staticIssues, code) {
   const nc = norm(code);
   const kept = [];
@@ -1160,10 +1216,6 @@ export function hashCode(str) {
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
-/**
- * Normalizes Python code for semantic comparison:
- * Strips comments outside strings, but PRESERVES string literal contents (even with #).
- */
 export function normalizeCodeForComparison(code) {
   const noComments = stripPythonCommentsOnly(code);
   return noComments
@@ -1179,9 +1231,6 @@ export function isMeaningfulCodeChange(code1, code2) {
   return n1 !== n2;
 }
 
-/**
- * Analyzes a repair attempt to detect progress, stagnation, or regressions.
- */
 export function analyzeRepairAttempt({
   beforeCode,
   afterCode,
