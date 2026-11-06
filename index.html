@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FutureCAD — Multi-Agent AI CAD Platform</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo">◢</span><b>FutureCAD</b><span class="tag">multi-agent · CadQuery · local Ollama</span></div>
+  <div class="status-group">
+    <span class="chip" id="connChip"><i class="dot" id="connDot"></i><span id="connText">Ollama: not tested</span></span>
+    <span class="chip" id="modelChip">Models: —</span>
+  </div>
+</header>
+
+<main class="layout">
+  <aside class="col">
+    <section class="card">
+      <h3>Configuration</h3>
+      <label for="cfgUrl">Ollama URL</label>
+      <input id="cfgUrl" type="text" spellcheck="false">
+      <label for="cfgAnalyst">Requirement Analyst / Reporter model</label>
+      <select id="cfgAnalyst"></select>
+      <label for="cfgCad">CAD Planner / Generator model</label>
+      <select id="cfgCad"></select>
+      <label for="cfgGen">CAD Generator model (optional override)</label>
+      <select id="cfgGen"></select>
+      <label for="cfgReviewer">Code Reviewer / Repair model</label>
+      <select id="cfgReviewer"></select>
+      <div class="grid2">
+        <div><label for="cfgRepairs">Max repair attempts</label><input id="cfgRepairs" type="number" min="0" max="3" step="1"></div>
+        <div><label for="cfgTemp">Temperature</label><input id="cfgTemp" type="number" min="0" max="1" step="0.05"></div>
+        <div><label for="cfgTokens">CAD token limit</label><input id="cfgTokens" type="number" min="500" max="16000" step="100"></div>
+        <div><label for="cfgJsonTokens">JSON token limit</label><input id="cfgJsonTokens" type="number" min="500" max="16000" step="100"></div>
+        <div><label for="cfgCtx">Context (num_ctx)</label><input id="cfgCtx" type="number" min="2048" max="65536" step="1024"></div>
+        <div><label for="cfgIdle">Idle timeout (s)</label><input id="cfgIdle" type="number" min="20" max="900" step="10"></div>
+      </div>
+      <div class="row">
+        <button class="btn" id="btnTest">Test connection</button>
+        <button class="btn" id="btnRefresh">Refresh models</button>
+      </div>
+      <p class="hint" id="cfgMsg"></p>
+    </section>
+
+    <section class="card">
+      <h3>Design input</h3>
+      <textarea id="prompt" rows="9" placeholder="Describe the mechanical part in natural language…"></textarea>
+      <div class="row">
+        <button class="btn primary" id="btnStart">▶ Start workflow</button>
+        <button class="btn danger" id="btnStop" disabled>■ Stop</button>
+        <button class="btn" id="btnReset">Reset</button>
+        <button class="btn ghost" id="btnExample">Load L-bracket test</button>
+      </div>
+      <p class="hint" id="runMsg">Ready.</p>
+    </section>
+  </aside>
+
+  <div class="col">
+    <section class="card">
+      <div class="card-head"><h3>Agent pipeline</h3><span class="muted" id="overallText">0%</span></div>
+      <div class="overall"><i id="overallBar"></i></div>
+      <div class="pipeline" id="pipeline"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h3>Live output</h3>
+        <span class="muted"><b id="liveAgent">—</b> · <span id="liveModel">—</span> · <span id="liveStage">idle</span></span></div>
+      <pre class="out live" id="liveOutput">Waiting for workflow…</pre>
+    </section>
+
+    <section class="card">
+      <h3>Verification status</h3>
+      <div class="verify" id="verification"></div>
+      <p class="hint">FutureCAD never executes Python. Execution, geometry and export checks stay “NOT VERIFIED” until a real CadQuery / OpenCascade run is performed.</p>
+    </section>
+
+    <section class="card">
+      <h3>Deliverables</h3>
+      <div class="tabs" id="tabs" role="tablist">
+        <button class="tab active" data-tab="requirements">Requirements</button>
+        <button class="tab" data-tab="plan">CAD plan</button>
+        <button class="tab" data-tab="code">Python</button>
+        <button class="tab" data-tab="review">Review</button>
+        <button class="tab" data-tab="repair">Repair history</button>
+        <button class="tab" data-tab="report">Final report</button>
+      </div>
+      <pre class="out" id="pane">Not generated yet.</pre>
+      <h4 class="dl-title">Downloads</h4>
+      <div class="row wrap" id="downloads"></div>
+    </section>
+  </div>
+</main>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
